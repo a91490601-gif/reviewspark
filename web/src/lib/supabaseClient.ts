@@ -1,10 +1,8 @@
 // web/src/lib/supabaseClient.ts
 import { createClient } from '@supabase/supabase-js';
 
-export const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-  {
-    auth: { persistSession: false }, // 서버/클라이언트 모두에서 가볍게 사용
-  }
-);
+const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
+
+// 브라우저/서버 공용 클라이언트
+export const supabase = createClient(supabaseUrl, supabaseAnonKey);
