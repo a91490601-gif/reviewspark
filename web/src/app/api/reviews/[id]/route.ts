@@ -1,88 +1,59 @@
-// app/api/reviews/[id]/route.ts
+// reviewspark/web/src/app/api/reviews/[id]/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-// 서버 전용 (Service Role)
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY!
-);
+const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const service = process.env.SUPABASE_SERVICE_ROLE_KEY!; // Vercel에 추가한 서비스 롤 키
 
-// 공통: id로 리뷰 + submit_key 조회
-async function getRow(id: number) {
-  const { data, error } = await supabase
+async function verifyKey(id: number, clientSubmitKey?: string | null) {
+  if (!clientSubmitKey) return { ok: false, status: 401, msg: "x-submit-key 헤더가 없습니다." };
+
+  const admin = createClient(url, service); // 서버에서만 사용
+  const { data, error } = await admin
     .from("reviews")
-    .select("id, submit_key")
+    .select("submit_key")
     .eq("id", id)
     .single();
-  if (error) throw error;
-  return data;
+
+  if (error) return { ok: false, status: 500, msg: error.message };
+  if (!data || data.submit_key !== clientSubmitKey)
+    return { ok: false, status: 403, msg: "권한이 없습니다." };
+
+  return { ok: true, status: 200, msg: "OK" };
 }
 
-// PATCH /api/reviews/:id  - 일부 필드 수정
-export async function PATCH(
-  req: Request,
-  { params }: { params: { id: string } }
-) {
-  try {
-    const id = Number(params.id);
-    const key = req.headers.get("x-review-key") ?? "";
-    if (!id || !key) {
-      return NextResponse.json({ message: "missing id or key" }, { status: 400 });
-    }
+// PATCH /api/reviews/:id  (수정)
+export async function PATCH(req: Request, ctx: { params: { id: string } }) {
+  const id = Number(ctx.params.id);
+  const submitKey = req.headers.get("x-submit-key");
 
-    const row = await getRow(id);
-    if (!row || row.submit_key !== key) {
-      return NextResponse.json({ message: "forbidden" }, { status: 403 });
-    }
+  const check = await verifyKey(id, submitKey);
+  if (!check.ok) return NextResponse.json({ error: check.msg }, { status: check.status });
 
-    const body = await req.json();
-    const patch: Record<string, any> = {};
-    if (typeof body.author === "string") patch.author = body.author;
-    if (typeof body.product === "string") patch.product = body.product;
-    if (typeof body.content === "string") patch.content = body.content;
-    if (typeof body.rating === "number") patch.rating = body.rating;
+  const body = await req.json().catch(() => ({}));
+  const { author, product, rating, content } = body;
 
-    if (Object.keys(patch).length === 0) {
-      return NextResponse.json({ message: "nothing to update" }, { status: 400 });
-    }
+  const admin = createClient(url, service);
+  const { error } = await admin
+    .from("reviews")
+    .update({ author, product, rating, content })
+    .eq("id", id);
 
-    const { data, error } = await supabase
-      .from("reviews")
-      .update(patch)
-      .eq("id", id)
-      .select("*")
-      .single();
-
-    if (error) throw error;
-    return NextResponse.json({ ok: true, review: data });
-  } catch (e: any) {
-    return NextResponse.json({ message: e.message ?? "server error" }, { status: 500 });
-  }
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ ok: true });
 }
 
-// DELETE /api/reviews/:id  - 삭제
-export async function DELETE(
-  req: Request,
-  { params }: { params: { id: string } }
-) {
-  try {
-    const id = Number(params.id);
-    const key = req.headers.get("x-review-key") ?? "";
-    if (!id || !key) {
-      return NextResponse.json({ message: "missing id or key" }, { status: 400 });
-    }
+// DELETE /api/reviews/:id  (삭제)
+export async function DELETE(_req: Request, ctx: { params: { id: string } }) {
+  const id = Number(ctx.params.id);
+  const submitKey = _req.headers.get("x-submit-key");
 
-    const row = await getRow(id);
-    if (!row || row.submit_key !== key) {
-      return NextResponse.json({ message: "forbidden" }, { status: 403 });
-    }
+  const check = await verifyKey(id, submitKey);
+  if (!check.ok) return NextResponse.json({ error: check.msg }, { status: check.status });
 
-    const { error } = await supabase.from("reviews").delete().eq("id", id);
-    if (error) throw error;
+  const admin = createClient(url, service);
+  const { error } = await admin.from("reviews").delete().eq("id", id);
 
-    return NextResponse.json({ ok: true });
-  } catch (e: any) {
-    return NextResponse.json({ message: e.message ?? "server error" }, { status: 500 });
-  }
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json({ ok: true });
 }
