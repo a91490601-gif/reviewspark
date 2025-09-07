@@ -1,54 +1,46 @@
-// app/api/reviews/route.ts
+// reviewspark/web/src/app/api/reviews/route.ts
 import { NextResponse } from "next/server";
 import { createClient } from "@supabase/supabase-js";
 
-const supabase = createClient(
-  process.env.NEXT_PUBLIC_SUPABASE_URL!,
-  process.env.SUPABASE_SERVICE_ROLE_KEY! // 서버 전용
-);
+const url = process.env.NEXT_PUBLIC_SUPABASE_URL!;
+const anon = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!;
 
-// GET /api/reviews?limit=20
-export async function GET(req: Request) {
-  const url = new URL(req.url);
-  const limit = Number(url.searchParams.get("limit") ?? 20);
+// GET /api/reviews  : 최근 리뷰 50개
+export async function GET() {
+  const supabase = createClient(url, anon);
+  const { data, error } = await supabase
+    .from("reviews")
+    .select("id, author, product, rating, content, created_at")
+    .order("id", { ascending: false })
+    .limit(50);
+
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
+  return NextResponse.json(data ?? []);
+}
+
+// POST /api/reviews : 새 리뷰 작성(제출키 생성 & 반환)
+export async function POST(req: Request) {
+  const body = await req.json().catch(() => ({}));
+  const { author = "", product = "", rating = 5, content = "" } = body;
+
+  if (!author || !product || !content) {
+    return NextResponse.json(
+      { error: "author, product, content는 필수입니다." },
+      { status: 400 }
+    );
+  }
+
+  const submitKey = crypto.randomUUID();
+  const supabase = createClient(url, anon);
 
   const { data, error } = await supabase
     .from("reviews")
-    .select("*")
-    .order("created_at", { ascending: false })
-    .limit(limit);
+    .insert([{ author, product, rating, content, submit_key: submitKey }])
+    .select("id")
+    .single();
 
-  if (error) {
-    return NextResponse.json({ message: error.message }, { status: 500 });
-  }
-  return NextResponse.json({ reviews: data ?? [] });
-}
+  if (error) return NextResponse.json({ error: error.message }, { status: 500 });
 
-// POST /api/reviews
-export async function POST(req: Request) {
-  try {
-    const { author, product, rating, content } = await req.json();
-
-    if (!author || !product || !content || typeof rating !== "number") {
-      return NextResponse.json({ message: "invalid body" }, { status: 400 });
-    }
-
-    // 관리키 발급 (클라이언트에 노출 금지, API에서만 반환)
-    const submit_key =
-      typeof crypto.randomUUID === "function"
-        ? crypto.randomUUID()
-        : Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
-
-    const { data, error } = await supabase
-      .from("reviews")
-      .insert([{ author, product, rating, content, submit_key }])
-      .select("id")
-      .single();
-
-    if (error) throw error;
-
-    return NextResponse.json({ ok: true, id: data!.id, submit_key });
-  } catch (e: any) {
-    return NextResponse.json({ message: e.message ?? "server error" }, { status: 500 });
-  }
+  // 클라이언트가 로컬에 저장할 수 있도록 id와 submitKey 반환
+  return NextResponse.json({ id: data!.id, submitKey });
 }
