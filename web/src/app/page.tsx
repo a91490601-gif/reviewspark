@@ -1,7 +1,7 @@
-// app/page.tsx
 "use client";
 
 import { useEffect, useState } from "react";
+import Link from "next/link";
 
 type Review = {
   id: number;
@@ -15,184 +15,173 @@ type Review = {
 export default function Page() {
   const [author, setAuthor] = useState("");
   const [product, setProduct] = useState("");
-  const [rating, setRating] = useState<number>(5);
+  const [rating, setRating] = useState(5);
   const [content, setContent] = useState("");
-  const [loading, setLoading] = useState(false);
   const [list, setList] = useState<Review[]>([]);
-  const [moreLoading, setMoreLoading] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   async function load() {
-    const r = await fetch("/api/reviews?limit=50", { cache: "no-store" });
-    const j = await r.json();
-    setList(j.reviews ?? []);
+    const res = await fetch("/api/reviews", { cache: "no-store" });
+    const data = await res.json();
+    setList(data);
   }
 
   useEffect(() => {
     load();
   }, []);
 
-  // 등록
-  async function onSubmit(e: React.FormEvent) {
-    e.preventDefault();
-    if (loading) return;
+  async function onSubmit() {
+    if (!author || !product || !content) return alert("모두 입력해주세요");
     setLoading(true);
     try {
-      const r = await fetch("/api/reviews", {
+      const res = await fetch("/api/reviews", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ author, product, rating, content }),
       });
-      const j = await r.json();
-      if (!r.ok) throw new Error(j.message || "등록 실패");
+      if (!res.ok) throw new Error("등록 실패");
+      const { id, submit_key } = await res.json();
 
-      // 관리키 저장 (id별)
-      const key = j.submit_key as string;
-      const id = j.id as number;
-      localStorage.setItem(`reviewKey:${id}`, key);
+      // 이 기기에서만 보관 → 내 글만 수정/삭제 버튼이 보임
+      localStorage.setItem(`review_key_${id}`, submit_key);
 
-      alert(`리뷰가 등록되었습니다.\n\n관리 키: ${key}\n\n※ 이 키가 있어야 수정/삭제가 가능합니다. (자동 저장됨)`);
-
-      // 폼 리셋 + 새로고침
       setAuthor("");
       setProduct("");
       setRating(5);
       setContent("");
       await load();
     } catch (e: any) {
-      alert(e.message ?? "오류가 발생했습니다");
+      alert(e.message ?? "오류");
     } finally {
       setLoading(false);
     }
   }
 
-  // 관리 키 가져오기 (없으면 입력 받기)
-  function getKeyFor(id: number) {
-    let key = localStorage.getItem(`reviewKey:${id}`) ?? "";
-    if (!key) {
-      key = prompt("관리 키를 입력하세요") ?? "";
-      if (key) localStorage.setItem(`reviewKey:${id}`, key);
-    }
-    return key;
+  function hasMyKey(id: number) {
+    return !!localStorage.getItem(`review_key_${id}`);
   }
 
-  // 수정
   async function onEdit(r: Review) {
-    const key = getKeyFor(r.id);
-    if (!key) return;
+    const newContent = prompt("리뷰 내용 수정", r.content);
+    if (newContent == null) return;
+    const newRatingStr = prompt("별점 수정(1~5)", String(r.rating));
+    if (newRatingStr == null) return;
+    const newRating = Number(newRatingStr);
+    if (!(newRating >= 1 && newRating <= 5)) return alert("1~5 사이 숫자");
 
-    const newAuthor = prompt("작성자 수정", r.author) ?? r.author;
-    const newProduct = prompt("상품명 수정", r.product) ?? r.product;
-    const newRatingStr = prompt("평점(1~5) 수정", String(r.rating)) ?? String(r.rating);
-    const newRating = Math.max(1, Math.min(5, Number(newRatingStr) || r.rating));
-    const newContent = prompt("리뷰 내용 수정", r.content) ?? r.content;
+    const key = localStorage.getItem(`review_key_${r.id}`);
+    if (!key) return alert("수정 권한 키가 없습니다(다른 기기?)");
 
-    try {
-      const res = await fetch(`/api/reviews/${r.id}`, {
-        method: "PATCH",
-        headers: { "Content-Type": "application/json", "x-review-key": key },
-        body: JSON.stringify({
-          author: newAuthor,
-          product: newProduct,
-          rating: newRating,
-          content: newContent,
-        }),
-      });
-      const j = await res.json();
-      if (!res.ok) throw new Error(j.message || "수정 실패");
-      await load();
-    } catch (e: any) {
-      alert(e.message ?? "오류가 발생했습니다");
+    const res = await fetch(`/api/reviews/${r.id}`, {
+      method: "PATCH",
+      headers: {
+        "Content-Type": "application/json",
+        "X-Submit-Key": key,
+      },
+      body: JSON.stringify({
+        author: r.author, // 작성자/상품명은 그대로 두고
+        product: r.product,
+        rating: newRating,
+        content: newContent,
+      }),
+    });
+
+    if (!res.ok) {
+      const j = await res.json().catch(() => ({}));
+      return alert(j.error ?? "수정 실패");
     }
+    await load();
   }
 
-  // 삭제
   async function onDelete(r: Review) {
     if (!confirm("정말 삭제할까요?")) return;
-    const key = getKeyFor(r.id);
-    if (!key) return;
+    const key = localStorage.getItem(`review_key_${r.id}`);
+    if (!key) return alert("삭제 권한 키가 없습니다(다른 기기?)");
 
-    try {
-      const res = await fetch(`/api/reviews/${r.id}`, {
-        method: "DELETE",
-        headers: { "x-review-key": key },
-      });
-      const j = await res.json();
-      if (!res.ok) throw new Error(j.message || "삭제 실패");
-      await load();
-    } catch (e: any) {
-      alert(e.message ?? "오류가 발생했습니다");
+    const res = await fetch(`/api/reviews/${r.id}`, {
+      method: "DELETE",
+      headers: { "X-Submit-Key": key },
+    });
+    if (!res.ok && res.status !== 204) {
+      const j = await res.json().catch(() => ({}));
+      return alert(j.error ?? "삭제 실패");
     }
+    // 사용한 키도 정리
+    localStorage.removeItem(`review_key_${r.id}`);
+    await load();
   }
 
   return (
-    <main className="min-h-screen bg-black text-white p-6">
+    <main className="mx-auto max-w-screen-sm p-5 text-gray-100">
       <h1 className="text-3xl font-extrabold mb-6">ReviewSpark</h1>
 
-      <form onSubmit={onSubmit} className="space-y-3 border p-4 rounded-xl border-gray-700">
+      <section className="rounded-2xl border border-gray-700 p-4 mb-8">
         <input
-          className="w-full p-3 rounded bg-zinc-900 outline-none"
+          className="mb-2 w-full rounded-xl bg-gray-800 p-3"
           placeholder="작성자"
           value={author}
           onChange={(e) => setAuthor(e.target.value)}
         />
         <input
-          className="w-full p-3 rounded bg-zinc-900 outline-none"
+          className="mb-2 w-full rounded-xl bg-gray-800 p-3"
           placeholder="상품명"
           value={product}
           onChange={(e) => setProduct(e.target.value)}
         />
         <input
-          className="w-full p-3 rounded bg-zinc-900 outline-none"
-          placeholder="평점 (1~5)"
+          className="mb-2 w-full rounded-xl bg-gray-800 p-3"
+          placeholder="별점(1~5)"
           inputMode="numeric"
           value={rating}
-          onChange={(e) => setRating(Math.max(1, Math.min(5, Number(e.target.value) || 5)))}
+          onChange={(e) => setRating(Number(e.target.value || 0))}
         />
         <textarea
-          className="w-full p-3 rounded bg-zinc-900 outline-none min-h-[120px]"
+          className="mb-3 w-full rounded-xl bg-gray-800 p-3 h-32"
           placeholder="리뷰 내용"
           value={content}
           onChange={(e) => setContent(e.target.value)}
         />
         <button
-          className="w-full py-3 rounded-xl bg-white text-black font-bold disabled:opacity-50"
           disabled={loading}
+          onClick={onSubmit}
+          className="w-full rounded-2xl bg-white/10 p-4 font-bold disabled:opacity-50"
         >
           {loading ? "등록 중..." : "리뷰 등록"}
         </button>
-      </form>
+      </section>
 
-      <h2 className="text-2xl font-bold mt-8 mb-4">최근 리뷰</h2>
-      <div className="space-y-4">
+      <h2 className="text-xl font-bold mb-3">최근 리뷰</h2>
+      <div className="space-y-3">
         {list.map((r) => (
-          <div key={r.id} className="border border-gray-700 p-4 rounded-xl">
+          <div key={r.id} className="rounded-2xl border border-gray-700 p-4">
             <div className="flex items-center justify-between">
-              <div className="font-semibold">{r.product}</div>
+              <div className="text-xl font-bold">{r.product}</div>
               <div>⭐ {r.rating}</div>
             </div>
-            <div className="text-sm text-gray-400 mt-1">
+            <div className="text-gray-400 text-sm mb-2">
               by {r.author} · {new Date(r.created_at).toLocaleString()}
             </div>
-            <div className="mt-3 whitespace-pre-wrap">{r.content}</div>
-            <div className="mt-4 flex gap-3">
-              <button
-                className="px-3 py-2 rounded bg-zinc-800"
-                onClick={() => onEdit(r)}
-              >
-                수정
-              </button>
-              <button
-                className="px-3 py-2 rounded bg-red-600"
-                onClick={() => onDelete(r)}
-              >
-                삭제
-              </button>
-            </div>
+            <div className="whitespace-pre-wrap">{r.content}</div>
+
+            {hasMyKey(r.id) && (
+              <div className="mt-3 flex gap-2">
+                <button
+                  onClick={() => onEdit(r)}
+                  className="flex-1 rounded-xl bg-white/10 p-2"
+                >
+                  수정
+                </button>
+                <button
+                  onClick={() => onDelete(r)}
+                  className="flex-1 rounded-xl bg-red-500/70 p-2"
+                >
+                  삭제
+                </button>
+              </div>
+            )}
           </div>
         ))}
       </div>
-
-      {moreLoading && <div className="mt-4 text-center text-gray-400">불러오는 중…</div>}
     </main>
   );
 }
