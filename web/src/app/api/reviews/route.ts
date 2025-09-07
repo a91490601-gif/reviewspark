@@ -1,100 +1,54 @@
-// web/src/app/api/reviews/route.ts
-import { NextResponse } from 'next/server'
-import { createClient } from '@/lib/supabaseClient'
+// app/api/reviews/route.ts
+import { NextResponse } from "next/server";
+import { createClient } from "@supabase/supabase-js";
 
-// GET /api/reviews?q=...&sort=...&page=1&limit=10
+const supabase = createClient(
+  process.env.NEXT_PUBLIC_SUPABASE_URL!,
+  process.env.SUPABASE_SERVICE_ROLE_KEY! // 서버 전용
+);
+
+// GET /api/reviews?limit=20
 export async function GET(req: Request) {
-  try {
-    const supabase = createClient()
-    const { searchParams } = new URL(req.url)
+  const url = new URL(req.url);
+  const limit = Number(url.searchParams.get("limit") ?? 20);
 
-    const q = (searchParams.get('q') || '').trim()
-    const sort = (searchParams.get('sort') || 'newest') as
-      | 'newest'
-      | 'oldest'
-      | 'rating_desc'
-      | 'rating_asc'
+  const { data, error } = await supabase
+    .from("reviews")
+    .select("*")
+    .order("created_at", { ascending: false })
+    .limit(limit);
 
-    const page = Math.max(1, Number(searchParams.get('page') || '1'))
-    const limit = Math.min(50, Math.max(1, Number(searchParams.get('limit') || '10')))
-    const from = (page - 1) * limit
-    const to = from + limit - 1
-
-    // ------ 공통 베이스 쿼리 (필터 동일하게 두 번 써야 하므로 함수화)
-    const baseFilter = (qb: ReturnType<typeof supabase.from<'reviews'>>) => {
-      let query = qb.select('*', { count: 'exact' })
-      if (q) {
-        // product/author/content 중 하나라도 매칭
-        query = query.or(
-          `product.ilike.%${q}%,author.ilike.%${q}%,content.ilike.%${q}%`
-        )
-      }
-      // 정렬
-      if (sort === 'newest') query = query.order('created_at', { ascending: false })
-      if (sort === 'oldest') query = query.order('created_at', { ascending: true })
-      if (sort === 'rating_desc') query = query.order('rating', { ascending: false }).order('created_at', { ascending: false })
-      if (sort === 'rating_asc') query = query.order('rating', { ascending: true }).order('created_at', { ascending: false })
-
-      return query
-    }
-
-    // 총 개수(필터 동일)만 우선 얻기
-    const { count: total, error: countErr } = await baseFilter(
-      supabase.from('reviews')
-    ).range(0, 0) // 데이터는 버리고 count만 받음
-    if (countErr) throw countErr
-
-    // 실제 페이지 데이터
-    const { data, error } = await baseFilter(supabase.from('reviews')).range(from, to)
-    if (error) throw error
-
-    const hasMore = total ? to + 1 < total : false
-
-    return NextResponse.json({
-      reviews: data ?? [],
-      page,
-      limit,
-      total: total ?? 0,
-      hasMore,
-    })
-  } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message || 'Unknown error' },
-      { status: 500 }
-    )
+  if (error) {
+    return NextResponse.json({ message: error.message }, { status: 500 });
   }
+  return NextResponse.json({ reviews: data ?? [] });
 }
 
 // POST /api/reviews
 export async function POST(req: Request) {
   try {
-    const supabase = createClient()
-    const body = await req.json()
+    const { author, product, rating, content } = await req.json();
 
-    const author = String(body.author || '').trim()
-    const product = String(body.product || '').trim()
-    const content = String(body.content || '').trim()
-    const rating = Number(body.rating)
+    if (!author || !product || !content || typeof rating !== "number") {
+      return NextResponse.json({ message: "invalid body" }, { status: 400 });
+    }
 
-    if (!author || !product || !content) {
-      return NextResponse.json({ error: '모든 필드를 입력하세요.' }, { status: 400 })
-    }
-    if (!Number.isFinite(rating) || rating < 1 || rating > 5) {
-      return NextResponse.json({ error: '평점은 1~5 사이여야 합니다.' }, { status: 400 })
-    }
+    // 관리키 발급 (클라이언트에 노출 금지, API에서만 반환)
+    const submit_key =
+      typeof crypto.randomUUID === "function"
+        ? crypto.randomUUID()
+        : Math.random().toString(36).slice(2) + Math.random().toString(36).slice(2);
 
     const { data, error } = await supabase
-      .from('reviews')
-      .insert({ author, product, content, rating })
-      .select()
-      .single()
+      .from("reviews")
+      .insert([{ author, product, rating, content, submit_key }])
+      .select("id")
+      .single();
 
-    if (error) throw error
-    return NextResponse.json({ review: data })
+    if (error) throw error;
+
+    return NextResponse.json({ ok: true, id: data!.id, submit_key });
   } catch (e: any) {
-    return NextResponse.json(
-      { error: e?.message || 'Unknown error' },
-      { status: 500 }
-    )
+    return NextResponse.json({ message: e.message ?? "server error" }, { status: 500 });
   }
 }
