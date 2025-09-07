@@ -1,7 +1,7 @@
 // web/src/app/page.tsx
 'use client';
 
-import { useCallback, useEffect, useState } from 'react';
+import { useEffect, useState } from 'react';
 
 type Review = {
   id: number;
@@ -13,121 +13,153 @@ type Review = {
 };
 
 export default function Page() {
+  // 폼 상태
   const [author, setAuthor] = useState('');
   const [product, setProduct] = useState('');
-  const [rating, setRating] = useState(5);
+  const [rating, setRating] = useState<number | ''>(5);
   const [content, setContent] = useState('');
   const [submitting, setSubmitting] = useState(false);
-  const [reviews, setReviews] = useState<Review[]>([]);
-  const [errMsg, setErrMsg] = useState('');
 
-  const load = useCallback(async () => {
-    setErrMsg('');
-    const res = await fetch('/api/reviews', { cache: 'no-store' });
-    const json = await res.json();
-    if (!res.ok) {
-      setErrMsg(json.error ?? '목록을 불러오지 못했어요.');
-      return;
-    }
-    setReviews(json.reviews ?? []);
+  // 리스트 상태
+  const [reviews, setReviews] = useState<Review[]>([]);
+  const [page, setPage] = useState(1);
+  const [hasMore, setHasMore] = useState(false);
+  const [loadingMore, setLoadingMore] = useState(false);
+
+  // 최초 1페이지 로드
+  useEffect(() => {
+    loadPage(1, true);
   }, []);
 
-  useEffect(() => { load(); }, [load]);
+  async function loadPage(nextPage: number, replace = false) {
+    setLoadingMore(true);
+    try {
+      const res = await fetch(`/api/reviews?page=${nextPage}&limit=10`, { cache: 'no-store' });
+      const json = await res.json();
+      if (!res.ok) throw new Error(json?.error || '로드 실패');
 
-  async function onSubmit(e: React.FormEvent) {
+      setHasMore(Boolean(json.hasMore));
+      setPage(nextPage);
+      if (replace) setReviews(json.reviews);
+      else setReviews(prev => [...prev, ...json.reviews]);
+    } catch (e) {
+      console.error(e);
+      alert('리뷰를 불러오는 중 오류가 발생했습니다.');
+    } finally {
+      setLoadingMore(false);
+    }
+  }
+
+  async function submitReview(e: React.FormEvent) {
     e.preventDefault();
-    if (submitting) return; // 중복 제출 방지 (클라이언트)
-    setSubmitting(true);
-    setErrMsg('');
+    if (!author || !product || !content || rating === '') {
+      alert('모든 필드를 입력하세요.');
+      return;
+    }
 
+    setSubmitting(true);
     try {
       const res = await fetch('/api/reviews', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ author, product, rating, content }),
+        body: JSON.stringify({
+          author,
+          product,
+          rating: Number(rating),
+          content,
+        }),
       });
       const json = await res.json();
-      if (!res.ok) throw new Error(json.error ?? '등록 실패');
+      if (!res.ok) throw new Error(json?.error || '등록 실패');
 
-      // 입력값 초기화 후 목록 새로고침
+      // 성공: 폼 초기화 + 1페이지 새로 로드 (중복 방지)
       setAuthor('');
       setProduct('');
       setRating(5);
       setContent('');
-      await load();
-    } catch (err: any) {
-      setErrMsg(err.message);
+      await loadPage(1, true);
+    } catch (e: any) {
+      alert(e.message || '등록 실패');
     } finally {
       setSubmitting(false);
     }
   }
 
   return (
-    <div className="max-w-2xl mx-auto p-6 space-y-6">
-      <h1 className="text-3xl font-bold">ReviewSpark</h1>
+    <main className="max-w-2xl mx-auto p-6 text-gray-100">
+      <h1 className="text-3xl font-bold mb-6">ReviewSpark</h1>
 
-      <form onSubmit={onSubmit} className="space-y-3 border rounded-xl p-4 bg-zinc-900/30">
+      {/* 입력 폼 */}
+      <form onSubmit={submitReview} className="space-y-4 border border-gray-600 rounded-2xl p-5 mb-10">
         <input
-          className="w-full p-3 rounded-lg bg-zinc-800 outline-none"
+          className="w-full rounded-lg bg-gray-800 p-3"
           placeholder="작성자"
           value={author}
-          onChange={(e) => setAuthor(e.target.value)}
-          required
+          onChange={e => setAuthor(e.target.value)}
         />
         <input
-          className="w-full p-3 rounded-lg bg-zinc-800 outline-none"
+          className="w-full rounded-lg bg-gray-800 p-3"
           placeholder="상품명"
           value={product}
-          onChange={(e) => setProduct(e.target.value)}
-          required
+          onChange={e => setProduct(e.target.value)}
         />
         <input
-          type="number"
-          min={1}
-          max={5}
-          className="w-full p-3 rounded-lg bg-zinc-800 outline-none"
+          className="w-full rounded-lg bg-gray-800 p-3"
+          placeholder="평점(1~5)"
+          inputMode="numeric"
           value={rating}
-          onChange={(e) => setRating(Number(e.target.value))}
-          required
+          onChange={e => {
+            const v = Number(e.target.value);
+            if (Number.isNaN(v)) setRating('');
+            else setRating(v);
+          }}
         />
         <textarea
-          className="w-full p-3 rounded-lg bg-zinc-800 outline-none"
+          className="w-full rounded-lg bg-gray-800 p-3 min-h-[120px]"
           placeholder="리뷰 내용"
-          rows={4}
           value={content}
-          onChange={(e) => setContent(e.target.value)}
-          required
+          onChange={e => setContent(e.target.value)}
         />
         <button
           type="submit"
           disabled={submitting}
-          className="w-full p-3 rounded-lg bg-black text-white disabled:opacity-50"
+          className="w-full rounded-xl bg-black/80 p-3 disabled:opacity-60"
         >
           {submitting ? '등록 중…' : '리뷰 등록'}
         </button>
-        {errMsg && <p className="text-red-400 text-sm">{errMsg}</p>}
       </form>
 
-      <section>
-        <h2 className="text-2xl font-semibold mb-3">최근 리뷰</h2>
-        <div className="space-y-3">
-          {reviews.map((r) => (
-            <article key={r.id} className="p-4 border rounded-lg">
-              <div className="flex items-center justify-between">
-                <div className="font-semibold">{r.product}</div>
-                <div>⭐ {r.rating}</div>
-              </div>
-              <div className="text-sm text-zinc-400">
-                by {r.author} · {new Date(r.created_at).toLocaleString()}
-              </div>
-              <p className="mt-2">{r.content}</p>
-            </article>
-          ))}
-          {reviews.length === 0 && (
-            <p className="text-sm text-zinc-400">아직 리뷰가 없습니다.</p>
-          )}
-        </div>
-      </section>
-    </div>
+      {/* 리스트 */}
+      <h2 className="text-2xl font-semibold mb-4">최근 리뷰</h2>
+      <div className="space-y-4">
+        {reviews.map(r => (
+          <article key={r.id} className="border border-gray-700 rounded-2xl p-4">
+            <div className="flex items-center justify-between mb-1">
+              <div className="text-lg font-semibold">{r.product}</div>
+              <div>⭐ {r.rating}</div>
+            </div>
+            <div className="text-sm text-gray-400 mb-2">
+              by {r.author} · {new Date(r.created_at).toLocaleString()}
+            </div>
+            <div className="whitespace-pre-wrap">{r.content}</div>
+          </article>
+        ))}
+      </div>
+
+      {/* 더보기 */}
+      <div className="mt-6 flex justify-center">
+        {hasMore ? (
+          <button
+            className="rounded-xl border border-gray-600 px-4 py-2 disabled:opacity-60"
+            onClick={() => loadPage(page + 1)}
+            disabled={loadingMore}
+          >
+            {loadingMore ? '불러오는 중…' : '더보기'}
+          </button>
+        ) : (
+          <div className="text-gray-500 text-sm">더 이상 항목이 없습니다.</div>
+        )}
+      </div>
+    </main>
   );
 }
